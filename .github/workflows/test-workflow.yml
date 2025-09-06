@@ -1,0 +1,47 @@
+name: Run Tests
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 2: Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      # Step 3: Install dependencies
+      - name: Install dependencies
+        run: npm install
+
+      # Step 4: Run tests
+      - name: Run tests
+        run: |
+          mkdir -p test-results
+          npm test -- --reporters=jest-junit --outputFile=test-results/results.xml
+
+      # Step 5: Send email on failure
+      - name: Send email if tests fail
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: "sainikhilchitra@gmail.com"       # Hardcoded email
+          password: "olqb qgrs rutr iqou"         # Hardcoded app password
+          subject: "GitHub Actions: Test Failed"
+          to: "sainikhilchitra@gmail.com"
+          from: "sainikhilchitra@gmail.com"
+          body: "Tests failed! Check GitHub Actions logs for details."
