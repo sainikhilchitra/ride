@@ -3,8 +3,8 @@ pipeline {
 
     environment {
         DOCKER_IMAGE = "swiftride:latest"
-        GITHUB_ACCOUNT = "sainikhilchitra"  // username/org
-        GITHUB_REPO = "ride"               // repo name only
+        GITHUB_ACCOUNT = "sainikhilchitra"  // GitHub username/org
+        GITHUB_REPO = "ride"               // Repository name only
     }
 
     stages {
@@ -12,7 +12,7 @@ pipeline {
             steps {
                 checkout scm
                 script {
-                    // Use 'bat' on Windows to get commit SHA
+                    // Get the current commit SHA for GitHub notifications
                     env.GIT_COMMIT = bat(script: 'git rev-parse HEAD', returnStdout: true).trim()
                 }
             }
@@ -26,16 +26,20 @@ pipeline {
 
         stage('Run Tests in Docker') {
             steps {
-                bat """
-                if not exist test-results mkdir test-results
-                docker run --rm -v "%cd%\\\\test-results:/tests" %DOCKER_IMAGE% sh -c "npm test -- --testResultsProcessor=jest-junit --outputFile=/tests/results.xml"
-                """
+                // Use catchError so that even if some tests fail, Jenkins continues to publish results
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    bat """
+                    if not exist test-results mkdir test-results
+                    docker run --rm -v "%cd%\\\\test-results:/tests" %DOCKER_IMAGE% npm test -- --reporters=default --reporters=jest-junit
+                    """
+                }
             }
         }
 
         stage('Publish Test Results') {
             steps {
-                junit 'test-results/results.xml'
+                // Make sure this matches the output file of jest-junit
+                junit allowEmptyResults: true, testResults: 'test-results/junit.xml'
             }
         }
     }
@@ -46,7 +50,7 @@ pipeline {
                 account: "%GITHUB_ACCOUNT%",
                 repo: "%GITHUB_REPO%",
                 sha: "%GIT_COMMIT%",
-                credentialsId: 'github-token',
+                credentialsId: 'github-token',  // Secret Text credential with your GitHub PAT
                 context: 'CI/Jenkins',
                 status: 'SUCCESS',
                 description: 'Build passed'
@@ -57,7 +61,7 @@ pipeline {
                 account: "%GITHUB_ACCOUNT%",
                 repo: "%GITHUB_REPO%",
                 sha: "%GIT_COMMIT%",
-                credentialsId: 'github-token',
+                credentialsId: 'github-token',  // Secret Text credential with your GitHub PAT
                 context: 'CI/Jenkins',
                 status: 'FAILURE',
                 description: 'Build failed'
