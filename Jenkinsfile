@@ -1,8 +1,10 @@
 pipeline {
     agent any
+
     environment {
-        GITHUB_TOKEN = credentials('github-token')
+        DOCKER_IMAGE = "my-app:test"
     }
+
     stages {
         stage('Checkout') {
             steps {
@@ -12,43 +14,32 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh 'docker build -t my-app:test .'
+                bat "docker build -t ${DOCKER_IMAGE} ."
             }
         }
 
         stage('Run Tests in Docker') {
             steps {
-                sh '''
-                mkdir -p test-results
-                docker run --rm -v $WORKSPACE/test-results:/tests my-app:test npm test -- --reporters=jest-junit
+                bat '''
+                if not exist test-results mkdir test-results
+                docker run --rm -v "%cd%\\test-results:/tests" ${DOCKER_IMAGE} sh -c "npm test -- --testResultsProcessor=jest-junit --outputFile=/tests/results.xml"
                 '''
             }
         }
 
         stage('Publish Test Results') {
             steps {
-                junit 'test-results/*.xml'
+                junit 'test-results/results.xml'
             }
         }
     }
+
     post {
         success {
-            script {
-                githubNotify(
-                    context: 'Jenkins Tests',
-                    status: 'SUCCESS',
-                    description: 'All test cases passed!'
-                )
-            }
+            githubNotify(credentialsId: 'github-token', status: 'SUCCESS', context: 'CI/Jenkins', description: 'Build passed')
         }
         failure {
-            script {
-                githubNotify(
-                    context: 'Jenkins Tests',
-                    status: 'FAILURE',
-                    description: 'Some test cases failed!'
-                )
-            }
+            githubNotify(credentialsId: 'github-token', status: 'FAILURE', context: 'CI/Jenkins', description: 'Build failed')
         }
     }
 }
