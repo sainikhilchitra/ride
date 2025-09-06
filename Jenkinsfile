@@ -3,9 +3,8 @@ pipeline {
 
     environment {
         DOCKER_IMAGE = "swiftride:latest"
-        GITHUB_ACCOUNT = "sainikhilchitra"
-        GITHUB_REPO = "ride"
-        GITHUB_TOKEN = credentials('github-token') // Must exist in Jenkins credentials
+        GITHUB_REPO = "sainikhilchitra/ride"   // owner/repo format
+        GITHUB_TOKEN = credentials('github-token')  // GitHub PAT stored in Jenkins credentials
     }
 
     stages {
@@ -13,7 +12,7 @@ pipeline {
             steps {
                 checkout scm
                 script {
-                    // Get the commit hash
+                    // Get the commit SHA
                     env.GIT_COMMIT = bat(script: 'git rev-parse HEAD', returnStdout: true).trim()
                 }
             }
@@ -47,16 +46,18 @@ pipeline {
     post {
         always {
             script {
-                // GitHub status notification
-                githubNotify(
-                    account: "%GITHUB_ACCOUNT%",
-                    repo: "%GITHUB_REPO%",
-                    sha: "%GIT_COMMIT%",
-                    credentialsId: 'github-token',
-                    context: 'CI/Jenkins',
-                    status: currentBuild.result == 'SUCCESS' ? 'SUCCESS' : 'FAILURE',
-                    description: "Build ${currentBuild.result}"
-                )
+                // Determine status for GitHub API
+                def status = currentBuild.result == 'SUCCESS' ? 'success' : 'failure'
+                def description = currentBuild.result == 'SUCCESS' ? 'Build passed' : 'Build failed'
+
+                // Use curl to post commit status
+                bat """
+                curl -H "Authorization: token %GITHUB_TOKEN%" ^
+                     -H "Accept: application/vnd.github.v3+json" ^
+                     -X POST ^
+                     -d "{\\"state\\": \\"${status}\\", \\"context\\": \\"Jenkins CI\\", \\"description\\": \\"${description}\\"}" ^
+                     https://api.github.com/repos/%GITHUB_REPO%/statuses/%GIT_COMMIT%
+                """
             }
         }
     }
