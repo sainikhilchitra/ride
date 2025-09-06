@@ -5,6 +5,7 @@ pipeline {
         DOCKER_IMAGE = "swiftride:latest"
         GITHUB_ACCOUNT = "sainikhilchitra"
         GITHUB_REPO = "ride"
+        GITHUB_TOKEN = credentials('github-token') // Must exist in Jenkins credentials
     }
 
     stages {
@@ -12,6 +13,7 @@ pipeline {
             steps {
                 checkout scm
                 script {
+                    // Get the commit hash
                     env.GIT_COMMIT = bat(script: 'git rev-parse HEAD', returnStdout: true).trim()
                 }
             }
@@ -45,19 +47,16 @@ pipeline {
     post {
         always {
             script {
-                if (Jenkins.instance.getCredentials('github-token') != null) {
-                    githubNotify(
-                        account: "%GITHUB_ACCOUNT%",
-                        repo: "%GITHUB_REPO%",
-                        sha: "%GIT_COMMIT%",
-                        credentialsId: 'github-token',
-                        context: 'CI/Jenkins',
-                        status: currentBuild.result == 'SUCCESS' ? 'SUCCESS' : 'FAILURE',
-                        description: "Build ${currentBuild.result}"
-                    )
-                } else {
-                    echo "GitHub credential 'github-token' not found. Skipping GitHub notify."
-                }
+                // GitHub status notification
+                githubNotify(
+                    account: "%GITHUB_ACCOUNT%",
+                    repo: "%GITHUB_REPO%",
+                    sha: "%GIT_COMMIT%",
+                    credentialsId: 'github-token',
+                    context: 'CI/Jenkins',
+                    status: currentBuild.result == 'SUCCESS' ? 'SUCCESS' : 'FAILURE',
+                    description: "Build ${currentBuild.result}"
+                )
             }
         }
     }
