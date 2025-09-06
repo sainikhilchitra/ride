@@ -2,28 +2,33 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_IMAGE = "my-app:test"
+        DOCKER_IMAGE = "swiftride:latest"
+        GITHUB_ACCOUNT = "https://github.com/sainikhilchitra"
+        GITHUB_REPO = "https://github.com/sainikhilchitra/ride"
     }
 
     stages {
         stage('Checkout') {
             steps {
                 checkout scm
+                script {
+                    env.GIT_COMMIT = sh(script: "git rev-parse HEAD", returnStdout: true).trim()
+                }
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                bat "docker build -t ${DOCKER_IMAGE} ."
+                bat "docker build -t %DOCKER_IMAGE% ."
             }
         }
 
         stage('Run Tests in Docker') {
             steps {
-                bat '''
+                bat """
                 if not exist test-results mkdir test-results
-                docker run --rm -v "%cd%\\test-results:/tests" ${DOCKER_IMAGE} sh -c "npm test -- --testResultsProcessor=jest-junit --outputFile=/tests/results.xml"
-                '''
+                docker run --rm -v "%cd%\\\\test-results:/tests" %DOCKER_IMAGE% sh -c "npm test -- --testResultsProcessor=jest-junit --outputFile=/tests/results.xml"
+                """
             }
         }
 
@@ -36,10 +41,26 @@ pipeline {
 
     post {
         success {
-            githubNotify(credentialsId: 'github-token', status: 'SUCCESS', context: 'CI/Jenkins', description: 'Build passed')
+            githubNotify(
+                account: "${GITHUB_ACCOUNT}",
+                repo: "${GITHUB_REPO}",
+                sha: "${env.GIT_COMMIT}",
+                credentialsId: 'github-token',
+                context: 'CI/Jenkins',
+                status: 'SUCCESS',
+                description: 'Build passed'
+            )
         }
         failure {
-            githubNotify(credentialsId: 'github-token', status: 'FAILURE', context: 'CI/Jenkins', description: 'Build failed')
+            githubNotify(
+                account: "${GITHUB_ACCOUNT}",
+                repo: "${GITHUB_REPO}",
+                sha: "${env.GIT_COMMIT}",
+                credentialsId: 'github-token',
+                context: 'CI/Jenkins',
+                status: 'FAILURE',
+                description: 'Build failed'
+            )
         }
     }
 }
