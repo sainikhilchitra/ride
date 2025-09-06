@@ -3,17 +3,17 @@ pipeline {
 
     environment {
         DOCKER_IMAGE = 'swiftride:latest'
-        GITHUB_TOKEN = credentials('github-token') // Jenkins credential ID
-        REPO_OWNER = 'sainikhilchitra'
-        REPO_NAME = 'ride'
+        TEST_RESULTS_DIR = "${WORKSPACE}/test-results"
+        GITHUB_TOKEN = credentials('github-token') // set your GitHub token in Jenkins credentials
     }
 
     stages {
         stage('Prepare') {
             steps {
                 script {
-                    // Ensure test-results directory exists
-                    bat "if not exist test-results mkdir test-results"
+                    if (!fileExists(TEST_RESULTS_DIR)) {
+                        bat "mkdir ${TEST_RESULTS_DIR}"
+                    }
                 }
             }
         }
@@ -21,14 +21,10 @@ pipeline {
         stage('Run Tests in Docker') {
             steps {
                 script {
-                    // Run tests but continue even if they fail
-                    catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                        bat """
-                        docker run --rm -v "%CD%\\\\test-results:/tests" ${DOCKER_IMAGE} ^
-                            npm test -- --reporters=default --reporters=jest-junit ^
-                            1>test-results/test-output.txt 2>&1
-                        """
-                    }
+                    // Run tests and capture output
+                    bat """
+                    docker run --rm -v "${TEST_RESULTS_DIR}:/tests" ${DOCKER_IMAGE} npm test -- --reporters=default --reporters=jest-junit  1> ${TEST_RESULTS_DIR}/test-output.txt 2>&1 || exit 0
+                    """
                 }
             }
         }
@@ -36,65 +32,40 @@ pipeline {
         stage('Parse Test Summary') {
             steps {
                 script {
-                    // Read test output
-                    def summary = [:]
-                    def lines = readFile('test-results/test-output.txt').split('\r?\n')
-
-                    summary.total = 0
-                    summary.passed = 0
-                    summary.failed = 0
-                    summary.tests = []
-
-                    lines.each { line ->
-                        def m1 = line =~ /Tests:\s+(\d+) passed, (\d+) total/
-                        def m2 = line =~ /Tests:\s+(\d+) failed, (\d+) passed, (\d+) total/
-                        def m3 = line =~ /✓ (.+) \((\d+) ms\)/
-                        if (m1) {
-                            summary.passed = m1[0][1].toInteger()
-                            summary.total = m1[0][2].toInteger()
-                        } else if (m2) {
-                            summary.failed = m2[0][1].toInteger()
-                            summary.passed = m2[0][2].toInteger()
-                            summary.total = m2[0][3].toInteger()
-                        } else if (m3) {
-                            summary.tests << m3[0][1]
-                        }
+                    // Only parse summary if test output exists
+                    def summaryFile = "${TEST_RESULTS_DIR}/test-output.txt"
+                    if (fileExists(summaryFile)) {
+                        def summaryText = readFile(summaryFile)
+                        echo "==== Test Output Summary ===="
+                        echo summaryText.split('\n').findAll { it.contains('Test Suites') || it.contains('Tests:') || it.contains('Time:') }.join('\n')
+                        // You can customize more parsing here for passed/failed test names
+                    } else {
+                        echo "No test output found."
                     }
-
-                    // Build markdown summary
-                    def markdown = """\
-                    |**Jenkins CI Test Summary**
-                    |- Total: ${summary.total}
-                    |- Passed: ${summary.passed}
-                    |- Failed: ${summary.failed}
-                    |- Tests:
-                    ${summary.tests.collect{ "- ${it}" }.join('\n')}
-                    """.stripMargin()
-
-                    // Save markdown to file (optional)
-                    writeFile file: 'test-results/summary.md', text: markdown
-                    env.TEST_SUMMARY = markdown
                 }
             }
         }
 
-        stage('Post Comment to GitHub PR') {
+        stage('Post Status to GitHub PR') {
+            when {
+                expression { return env.CHANGE_ID != null } // only if this is a PR build
+            }
             steps {
                 script {
-                    // Only run if this is a PR
-                    if (env.CHANGE_ID) {
-                        def prNumber = env.CHANGE_ID
-                        def apiUrl = "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${prNumber}/comments"
-                        bat """
-                        curl -H "Authorization: token ${GITHUB_TOKEN}" ^
-                             -H "Accept: application/vnd.github.v3+json" ^
-                             -X POST ^
-                             -d "{\\"body\\": \\"${env.TEST_SUMMARY.replaceAll('"','\\\\\\"')}\\n\\"}" ^
-                             ${apiUrl}
-                        """
-                    } else {
-                        echo "Not a pull request, skipping GitHub comment."
-                    }
+                    def prNumber = env.CHANGE_ID
+                    def commitSHA = env.GIT_COMMIT
+                    def summaryFile = "${TEST_RESULTS_DIR}/test-output.txt"
+                    def passed = summaryText.contains('0 failed') ? true : false
+                    def state = passed ? "success" : "failure"
+                    def description = passed ? "All tests passed" : "Some tests failed"
+
+                    bat """
+                    curl -H "Authorization: token ${GITHUB_TOKEN}" ^
+                         -H "Accept: application/vnd.github.v3+json" ^
+                         -X POST ^
+                         -d "{\\"state\\": \\"${state}\\", \\"context\\": \\"Jenkins CI\\", \\"description\\": \\"${description}\\"}" ^
+                         https://api.github.com/repos/sainikhilchitra/ride/statuses/${commitSHA}
+                    """
                 }
             }
         }
@@ -103,7 +74,13 @@ pipeline {
     post {
         always {
             archiveArtifacts artifacts: 'test-results/**', allowEmptyArchive: true
-            echo "Artifacts archived."
+            echo "Test logs archived."
+        }
+        failure {
+            echo "Pipeline finished with failures."
+        }
+        success {
+            echo "Pipeline finished successfully."
         }
     }
 }
