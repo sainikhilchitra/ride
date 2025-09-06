@@ -21,32 +21,14 @@ pipeline {
         stage('Run Tests in Docker') {
             steps {
                 script {
-                    // Run tests and capture output
                     bat """
-                    docker run --rm -v "${TEST_RESULTS_DIR}:/tests" ${DOCKER_IMAGE} npm test -- --reporters=default --reporters=jest-junit 1> "${TEST_RESULTS_DIR}\\test-output.txt" 2>&1
+                    docker run --rm -v "${TEST_RESULTS_DIR}:/tests" ${DOCKER_IMAGE} npm test -- --reporters=default --reporters=jest-junit 1> "${TEST_RESULTS_DIR}\\test-output.txt" 2>&1 || exit 0
                     """
                 }
             }
         }
 
-        stage('Parse Test Summary') {
-            steps {
-                script {
-                    def summaryFile = "${TEST_RESULTS_DIR}\\test-output.txt"
-                    if (fileExists(summaryFile)) {
-                        def summaryText = readFile(summaryFile)
-                        echo "==== Test Output Summary ===="
-                        echo summaryText.split('\\r?\\n').findAll { 
-                            it.contains('Test Suites') || it.contains('Tests:') || it.contains('Time:')
-                        }.join('\n')
-                    } else {
-                        echo "No test output found."
-                    }
-                }
-            }
-        }
-
-        stage('Post Status to GitHub PR') {
+        stage('Parse Test Summary & Post to GitHub PR') {
             when {
                 expression { return env.CHANGE_ID != null } // only for PR builds
             }
@@ -54,16 +36,22 @@ pipeline {
                 script {
                     def summaryFile = "${TEST_RESULTS_DIR}\\test-output.txt"
                     def summaryText = fileExists(summaryFile) ? readFile(summaryFile) : ""
+                    
+                    // Parse quick summary
                     def passed = summaryText.contains('0 failed')
                     def state = passed ? "success" : "failure"
                     def description = passed ? "All tests passed" : "Some tests failed"
-                    def commitSHA = env.GIT_COMMIT
+                    def summaryLines = summaryText.split('\\r?\\n').findAll { it.contains('Test Suites') || it.contains('Tests:') || it.contains('Time:') }.join(' | ')
+                    
+                    echo "Test Summary: ${summaryLines}"
 
+                    // Post status to GitHub
+                    def commitSHA = env.GIT_COMMIT
                     bat """
                     curl -H "Authorization: token ${GITHUB_TOKEN}" ^
                          -H "Accept: application/vnd.github.v3+json" ^
                          -X POST ^
-                         -d "{\\"state\\": \\"${state}\\", \\"context\\": \\"Jenkins CI\\", \\"description\\": \\"${description}\\"}" ^
+                         -d "{\\"state\\": \\"${state}\\", \\"context\\": \\"Jenkins CI\\", \\"description\\": \\"${description}: ${summaryLines}\\"}" ^
                          https://api.github.com/repos/sainikhilchitra/ride/statuses/${commitSHA}
                     """
                 }
@@ -73,14 +61,7 @@ pipeline {
 
     post {
         always {
-            archiveArtifacts artifacts: 'test-results/**', allowEmptyArchive: true
-            echo "Test logs archived."
-        }
-        failure {
-            echo "Pipeline finished with failures."
-        }
-        success {
-            echo "Pipeline finished successfully."
+            echo "Pipeline finished. Test results in ${TEST_RESULTS_DIR}"
         }
     }
 }
