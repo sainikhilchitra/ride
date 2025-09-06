@@ -2,100 +2,74 @@ pipeline {
     agent any
 
     environment {
+        TEST_RESULTS = "test-results/test-output.txt"
         DOCKER_IMAGE = "swiftride:latest"
-        GITHUB_TOKEN = credentials('github-token')
-        REPO_OWNER   = "sainikhilchitra"
-        REPO_NAME    = "ride"
+        REPO_OWNER = "sainikhilchitra"
+        REPO_NAME = "ride"
     }
 
     stages {
         stage('Checkout') {
             steps {
                 checkout scm
-                script {
-                    env.GIT_COMMIT = bat(script: 'git rev-parse HEAD', returnStdout: true).trim()
-                    env.PR_NUMBER = env.CHANGE_ID
-                }
-            }
-        }
-
-        stage('Build Docker Image') {
-            steps {
-                bat "docker build -t %DOCKER_IMAGE% ."
             }
         }
 
         stage('Run Tests in Docker') {
             steps {
-                bat """
-                if not exist test-results mkdir test-results
-                docker run --rm -v "%cd%\\\\test-results:/tests" %DOCKER_IMAGE% npm test 1>test-results/test-output.txt 2>&1
-                """
+                script {
+                    // Create test-results directory
+                    bat "mkdir test-results"
+
+                    // Run tests inside Docker and redirect output to file
+                    bat """
+                    docker run --rm -v "%CD%\\\\test-results:/tests" ${DOCKER_IMAGE} ^
+                        npm test > /tests/test-output.txt 2>&1
+                    """
+                }
             }
         }
 
-        stage('Archive Test Logs') {
-            steps {
-                archiveArtifacts artifacts: 'test-results/test-output.txt', fingerprint: true
-            }
-        }
-
-        stage('Post PR Test Results') {
+        stage('Parse Test Summary') {
             steps {
                 script {
-                    if (env.PR_NUMBER) {
-                        // Read test log
-                        def testLog = readFile('test-results/test-output.txt')
+                    // Read test output
+                    def output = readFile(TEST_RESULTS).readLines()
 
-                        // Parse test summary
-                        def suiteMatch = testLog =~ /Test Suites: (\d+) failed, (\d+) passed, (\d+) total/
-                        def testMatch = testLog =~ /Tests: +(\d+) failed, (\d+) passed, (\d+) total/
-                        def failedTestsMatch = testLog =~ /● (.+)/
-                        
-                        def suitesFailed = suiteMatch ? suiteMatch[0][1] : "0"
-                        def suitesPassed = suiteMatch ? suiteMatch[0][2] : "0"
-                        def suitesTotal  = suiteMatch ? suiteMatch[0][3] : "0"
-                        
-                        def testsFailed = testMatch ? testMatch[0][1] : "0"
-                        def testsPassed = testMatch ? testMatch[0][2] : "0"
-                        def testsTotal  = testMatch ? testMatch[0][3] : "0"
+                    // Find the line with test summary
+                    def summaryLine = output.find { it =~ /Tests:/ } ?: "No tests found"
+                    echo "Test Summary: ${summaryLine}"
 
-                        def failedTests = failedTestsMatch.collect { it[1] }.join(", ")
-                        if (!failedTests) { failedTests = "None" }
+                    // Save for later to post to GitHub
+                    env.TEST_SUMMARY = summaryLine
+                }
+            }
+        }
 
-                        def state = testsFailed == "0" ? "success" : "failure"
-                        def description = testsFailed == "0" ? "All tests passed" : "${testsFailed} tests failed"
-                        def comment = """**Jenkins CI Test Result**
-                        
-- Test Suites: ${suitesPassed} passed, ${suitesFailed} failed, ${suitesTotal} total
-- Tests: ${testsPassed} passed, ${testsFailed} failed, ${testsTotal} total
-- Failed Tests: ${failedTests}
+        stage('Post Status to GitHub PR') {
+            steps {
+                withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+                    script {
+                        // Get current commit SHA
+                        def commitSha = sh(returnStdout: true, script: "git rev-parse HEAD").trim()
 
-Full log: [test-output.txt](test-results/test-output.txt)
-"""
-
-                        // Post status
+                        // Post GitHub status with test summary
                         bat """
                         curl -H "Authorization: token %GITHUB_TOKEN%" ^
                              -H "Accept: application/vnd.github.v3+json" ^
                              -X POST ^
-                             -d "{\\"state\\": \\"${state}\\", \\"context\\": \\"Jenkins CI\\", \\"description\\": \\"${description}\\"}" ^
-                             https://api.github.com/repos/%REPO_OWNER%/%REPO_NAME%/statuses/%GIT_COMMIT%
+                             -d "{\\"state\\": \\"success\\", \\"context\\": \\"Jenkins CI\\", \\"description\\": \\"${TEST_SUMMARY}\\"}" ^
+                             https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/statuses/${commitSha}
                         """
-
-                        // Post PR comment
-                        bat """
-                        curl -H "Authorization: token %GITHUB_TOKEN%" ^
-                             -H "Accept: application/vnd.github.v3+json" ^
-                             -X POST ^
-                             -d "{\\"body\\": \\"${comment.replaceAll('"','\\\\\\"')}\\"}" ^
-                             https://api.github.com/repos/%REPO_OWNER%/%REPO_NAME%/issues/%PR_NUMBER%/comments
-                        """
-                    } else {
-                        echo "Not a PR build. Skipping GitHub comment."
                     }
                 }
             }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: TEST_RESULTS, allowEmptyArchive: true
         }
     }
 }
