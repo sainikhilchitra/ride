@@ -3,8 +3,8 @@ pipeline {
 
     environment {
         DOCKER_IMAGE = "swiftride:latest"
-        GITHUB_ACCOUNT = "https://github.com/sainikhilchitra"
-        GITHUB_REPO = "https://github.com/sainikhilchitra/ride"
+        GITHUB_ACCOUNT = "sainikhilchitra"  // username/org
+        GITHUB_REPO = "ride"               // repo name only
     }
 
     stages {
@@ -12,7 +12,8 @@ pipeline {
             steps {
                 checkout scm
                 script {
-                    env.GIT_COMMIT = sh(script: "git rev-parse HEAD", returnStdout: true).trim()
+                    // Use 'bat' on Windows to get commit SHA
+                    env.GIT_COMMIT = bat(script: 'git rev-parse HEAD', returnStdout: true).trim()
                 }
             }
         }
@@ -42,9 +43,9 @@ pipeline {
     post {
         success {
             githubNotify(
-                account: "${GITHUB_ACCOUNT}",
-                repo: "${GITHUB_REPO}",
-                sha: "${env.GIT_COMMIT}",
+                account: "%GITHUB_ACCOUNT%",
+                repo: "%GITHUB_REPO%",
+                sha: "%GIT_COMMIT%",
                 credentialsId: 'github-token',
                 context: 'CI/Jenkins',
                 status: 'SUCCESS',
@@ -53,9 +54,9 @@ pipeline {
         }
         failure {
             githubNotify(
-                account: "${GITHUB_ACCOUNT}",
-                repo: "${GITHUB_REPO}",
-                sha: "${env.GIT_COMMIT}",
+                account: "%GITHUB_ACCOUNT%",
+                repo: "%GITHUB_REPO%",
+                sha: "%GIT_COMMIT%",
                 credentialsId: 'github-token',
                 context: 'CI/Jenkins',
                 status: 'FAILURE',
