@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        GITHUB_TOKEN = credentials('github-token') // GitHub App token or Personal Access Token
+        GITHUB_TOKEN = credentials('ride-24') // GitHub App token or Personal Access Token
     }
 
     stages {
@@ -57,3 +57,4 @@ pipeline {
         }
     }
 }
+
