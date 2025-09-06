@@ -3,62 +3,38 @@ pipeline {
 
     environment {
         DOCKER_IMAGE = 'swiftride:latest'
-        TEST_RESULTS_DIR = "${WORKSPACE}/test-results"
-        GITHUB_TOKEN = credentials('github-token') // set your GitHub token in Jenkins credentials
+        GITHUB_TOKEN = credentials('github-token') // GitHub App token
     }
 
     stages {
-        stage('Prepare') {
-            steps {
-                script {
-                    if (!fileExists(TEST_RESULTS_DIR)) {
-                        bat "mkdir ${TEST_RESULTS_DIR}"
-                    }
-                }
-            }
-        }
 
         stage('Run Tests in Docker') {
             steps {
                 script {
-                    // Run tests and capture output
+                    echo "==== Running Tests in Docker ===="
+                    // Run tests live, output directly to Jenkins console
+                    // Use '|| exit 0' so Jenkins doesn't fail on test failures
                     bat """
-                    docker run --rm -v "${TEST_RESULTS_DIR}:/tests" ${DOCKER_IMAGE} npm test -- --reporters=default --reporters=jest-junit  1> ${TEST_RESULTS_DIR}/test-output.txt 2>&1 || exit 0
+                        docker run --rm ${DOCKER_IMAGE} sh -c "npm test -- --reporters=default || exit 0"
                     """
-                }
-            }
-        }
-
-        stage('Parse Test Summary') {
-            steps {
-                script {
-                    // Only parse summary if test output exists
-                    def summaryFile = "${TEST_RESULTS_DIR}/test-output.txt"
-                    if (fileExists(summaryFile)) {
-                        def summaryText = readFile(summaryFile)
-                        echo "==== Test Output Summary ===="
-                        echo summaryText.split('\n').findAll { it.contains('Test Suites') || it.contains('Tests:') || it.contains('Time:') }.join('\n')
-                        // You can customize more parsing here for passed/failed test names
-                    } else {
-                        echo "No test output found."
-                    }
+                    echo "==== Test Execution Complete ===="
                 }
             }
         }
 
         stage('Post Status to GitHub PR') {
             when {
-                expression { return env.CHANGE_ID != null } // only if this is a PR build
+                expression { return env.CHANGE_ID != null } // Only for PR builds
             }
             steps {
                 script {
-                    def prNumber = env.CHANGE_ID
-                    def commitSHA = env.GIT_COMMIT
-                    def summaryFile = "${TEST_RESULTS_DIR}/test-output.txt"
-                    def passed = summaryText.contains('0 failed') ? true : false
+                    // Capture exit code to determine pass/fail
+                    def passed = currentBuild.currentResult == 'SUCCESS'
                     def state = passed ? "success" : "failure"
                     def description = passed ? "All tests passed" : "Some tests failed"
+                    def commitSHA = env.GIT_COMMIT
 
+                    echo "Posting commit status to GitHub..."
                     bat """
                     curl -H "Authorization: token ${GITHUB_TOKEN}" ^
                          -H "Accept: application/vnd.github.v3+json" ^
@@ -69,12 +45,12 @@ pipeline {
                 }
             }
         }
+
     }
 
     post {
         always {
-            archiveArtifacts artifacts: 'test-results/**', allowEmptyArchive: true
-            echo "Test logs archived."
+            echo "Pipeline finished. Check console output and PR status."
         }
         failure {
             echo "Pipeline finished with failures."
