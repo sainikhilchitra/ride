@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    environment {
+        GITHUB_TOKEN = credentials('github-token') // GitHub App token or Personal Access Token
+    }
+
     stages {
         stage('Checkout') {
             steps {
@@ -8,31 +12,48 @@ pipeline {
             }
         }
 
-        stage('Install') {
+        stage('Install Dependencies') {
             steps {
-                sh 'npm install'
+                bat 'npm ci'
             }
         }
 
-        stage('Build') {
+        stage('Run Tests') {
             steps {
-                sh 'npm run build'
+                bat 'npm test'
             }
-        }
-
-        stage('Test') {
-            steps {
-                sh 'npm test -- --watchAll=false'
-            }
-        }
-
-        stage('Docker Build & Push') {
-            steps {
-                withDockerRegistry([ credentialsId: 'dockerhub-creds', url: '' ]) {
-                    sh 'docker build -t your-dockerhub-username/swiftride:latest .'
-                    sh 'docker push your-dockerhub-username/swiftride:latest'
+            post {
+                success {
+                    echo "All tests passed ✅"
+                }
+                failure {
+                    error "Tests failed ❌"
                 }
             }
+        }
+
+        stage('Merge to Main') {
+            when {
+                branch pattern: "PR-.*", comparator: "REGEXP" // Only run on PRs
+            }
+            steps {
+                script {
+                    echo "Merging PR to main since tests passed..."
+                    bat """
+                    git config user.name "Jenkins CI"
+                    git config user.email "jenkins@ci.com"
+                    git checkout main
+                    git merge %BRANCH_NAME% --no-ff -m "Auto-merge PR %BRANCH_NAME% via Jenkins"
+                    git push https://%GITHUB_TOKEN%@github.com/<username>/<repo>.git main
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "Pipeline finished."
         }
     }
 }
